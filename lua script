@@ -1,0 +1,255 @@
+```lua
+local npcClass = {}
+npcClass.__index = npcClass
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+-- constructor
+function npcClass.new(model)
+	local self = setmetatable({}, npcClass)
+
+	self.model = model
+	self.humanoid = model:WaitForChild("Humanoid")
+	self.root = model:WaitForChild("HumanoidRootPart")
+
+	self.id = model.Name
+	self.target = nil
+
+	self.state = "idle"
+	self.range = 60
+	self.attackRange = 6
+
+	self.moving = false
+	self.lastPosition = nil
+
+	self.cooldowns = {}
+	self.states = {}
+
+	self.debugEnabled = true
+
+	self:initStates()
+
+	return self
+end
+
+-- debug print (simple)
+function npcClass:debug(msg)
+	if not self.debugEnabled then return end
+	print("[NPC]", self.id, msg)
+end
+
+-- cooldown system
+function npcClass:setCooldown(name, time)
+	self.cooldowns[name] = tick() + time
+end
+
+function npcClass:hasCooldown(name)
+	return self.cooldowns[name] and self.cooldowns[name] > tick()
+end
+
+-- get closest player
+function npcClass:getClosestPlayer()
+	local closest
+	local dist = math.huge
+
+	for _, player in pairs(Players:GetPlayers()) do
+		local char = player.Character
+		if not char then continue end
+
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if not hrp then continue end
+
+		local magnitude = (hrp.Position - self.root.Position).Magnitude
+
+		if magnitude < dist then
+			dist = magnitude
+			closest = char
+		end
+	end
+
+	return closest, dist
+end
+
+-- simple vision check
+function npcClass:canSee(target)
+	if not target then return end
+
+	local hrp = target:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local dir = (hrp.Position - self.root.Position).Unit
+	local look = self.root.CFrame.LookVector
+
+	local dot = look:Dot(dir)
+
+	if dot > 0.4 then
+		return true
+	end
+end
+
+-- follow target
+function npcClass:follow(target)
+	if not target then return end
+
+	local hrp = target:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	self.humanoid:MoveTo(hrp.Position)
+	self.moving = true
+end
+
+-- attack system
+function npcClass:attack(target)
+	if self:hasCooldown("attack") then return end
+
+	local hum = target:FindFirstChild("Humanoid")
+	if not hum then return end
+
+	self:setCooldown("attack", 1.5)
+
+	hum:TakeDamage(10)
+	self:debug("attacked target")
+end
+
+-- state system setup
+function npcClass:initStates()
+	self.states = {
+		idle = {
+			enter = function(self)
+				self:debug("entered idle")
+			end,
+
+			update = function(self)
+				local target, dist = self:getClosestPlayer()
+
+				if target and dist < self.range then
+					if self:canSee(target) then
+						self.target = target
+						self:setState("chasing")
+					end
+				end
+			end
+		},
+
+		chasing = {
+			enter = function(self)
+				self:debug("entered chasing")
+			end,
+
+			update = function(self)
+				if not self.target then
+					self:setState("idle")
+					return
+				end
+
+				local hrp = self.target:FindFirstChild("HumanoidRootPart")
+				if not hrp then
+					self.target = nil
+					self:setState("idle")
+					return
+				end
+
+				local dist = (hrp.Position - self.root.Position).Magnitude
+
+				if dist > self.range then
+					self.target = nil
+					self:setState("idle")
+					return
+				end
+
+				if dist <= self.attackRange then
+					self:setState("attacking")
+					return
+				end
+
+				self:follow(self.target)
+			end
+		},
+
+		attacking = {
+			enter = function(self)
+				self:debug("entered attacking")
+			end,
+
+			update = function(self)
+				if not self.target then
+					self:setState("idle")
+					return
+				end
+
+				local hrp = self.target:FindFirstChild("HumanoidRootPart")
+				if not hrp then
+					self.target = nil
+					self:setState("idle")
+					return
+				end
+
+				local dist = (hrp.Position - self.root.Position).Magnitude
+
+				if dist > self.attackRange then
+					self:setState("chasing")
+					return
+				end
+
+				self:attack(self.target)
+			end
+		}
+	}
+end
+
+-- state switch
+function npcClass:setState(state)
+	if self.state == state then return end
+
+	if self.states[self.state] and self.states[self.state].exit then
+		self.states[self.state].exit(self)
+	end
+
+	self.state = state
+
+	if self.states[self.state] and self.states[self.state].enter then
+		self.states[self.state].enter(self)
+	end
+end
+
+-- movement tick
+function npcClass:move()
+	if not self.moving then return end
+
+	-- simple movement fallback
+	if self.lastPosition then
+		if (self.root.Position - self.lastPosition).Magnitude < 1 then
+			self.moving = false
+		end
+	end
+
+	self.lastPosition = self.root.Position
+end
+
+-- main update
+function npcClass:update()
+	if self.states[self.state] and self.states[self.state].update then
+		self.states[self.state].update(self)
+	end
+end
+
+-- main loop
+function npcClass:start()
+	self.connection = RunService.Heartbeat:Connect(function(dt)
+		self:update()
+		self:move()
+	end)
+end
+
+-- destroy npc
+function npcClass:Destroy()
+	if self.connection then
+		self.connection:Disconnect()
+	end
+
+	self.model:Destroy()
+end
+
+return npcClass
+```
