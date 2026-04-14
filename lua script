@@ -1,11 +1,10 @@
-```lua
+```lua id="npc200"
 local npcClass = {}
 npcClass.__index = npcClass
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
--- constructor
 function npcClass.new(model)
 	local self = setmetatable({}, npcClass)
 
@@ -17,14 +16,17 @@ function npcClass.new(model)
 	self.target = nil
 
 	self.state = "idle"
-	self.range = 60
+	self.range = 80
 	self.attackRange = 6
 
-	self.moving = false
-	self.lastPosition = nil
+	self.memory = nil
+	self.memoryTime = 0
 
 	self.cooldowns = {}
 	self.states = {}
+
+	self.moving = false
+	self.lastPos = nil
 
 	self.debugEnabled = true
 
@@ -33,22 +35,23 @@ function npcClass.new(model)
 	return self
 end
 
--- debug print (simple)
+-- debug used to track behaviour during runtime
 function npcClass:debug(msg)
 	if not self.debugEnabled then return end
-	print("[NPC]", self.id, msg)
+	print("NPC", self.id, msg)
 end
 
--- cooldown system
+-- cooldown prevents spam actions like attack
 function npcClass:setCooldown(name, time)
 	self.cooldowns[name] = tick() + time
 end
 
+-- checks if cooldown still active
 function npcClass:hasCooldown(name)
 	return self.cooldowns[name] and self.cooldowns[name] > tick()
 end
 
--- get closest player
+-- find closest player to reduce search cost later
 function npcClass:getClosestPlayer()
 	local closest
 	local dist = math.huge
@@ -60,10 +63,10 @@ function npcClass:getClosestPlayer()
 		local hrp = char:FindFirstChild("HumanoidRootPart")
 		if not hrp then continue end
 
-		local magnitude = (hrp.Position - self.root.Position).Magnitude
+		local d = (hrp.Position - self.root.Position).Magnitude
 
-		if magnitude < dist then
-			dist = magnitude
+		if d < dist then
+			dist = d
 			closest = char
 		end
 	end
@@ -71,7 +74,7 @@ function npcClass:getClosestPlayer()
 	return closest, dist
 end
 
--- simple vision check
+-- dot check avoids full raycast every frame
 function npcClass:canSee(target)
 	if not target then return end
 
@@ -88,7 +91,7 @@ function npcClass:canSee(target)
 	end
 end
 
--- follow target
+-- follow uses humanoid for built in path solving
 function npcClass:follow(target)
 	if not target then return end
 
@@ -99,7 +102,7 @@ function npcClass:follow(target)
 	self.moving = true
 end
 
--- attack system
+-- attack uses cooldown to control damage rate
 function npcClass:attack(target)
 	if self:hasCooldown("attack") then return end
 
@@ -109,15 +112,26 @@ function npcClass:attack(target)
 	self:setCooldown("attack", 1.5)
 
 	hum:TakeDamage(10)
-	self:debug("attacked target")
+	self:debug("attack fired")
 end
 
--- state system setup
+-- memory stores last known target position
+function npcClass:updateMemory(pos)
+	self.memory = pos
+	self.memoryTime = tick()
+end
+
+-- memory decay avoids infinite chasing
+function npcClass:hasMemory()
+	return self.memory and (tick() - self.memoryTime < 5)
+end
+
 function npcClass:initStates()
 	self.states = {
+
 		idle = {
 			enter = function(self)
-				self:debug("entered idle")
+				self:debug("idle enter")
 			end,
 
 			update = function(self)
@@ -126,6 +140,7 @@ function npcClass:initStates()
 				if target and dist < self.range then
 					if self:canSee(target) then
 						self.target = target
+						self:updateMemory(target.HumanoidRootPart.Position)
 						self:setState("chasing")
 					end
 				end
@@ -134,19 +149,19 @@ function npcClass:initStates()
 
 		chasing = {
 			enter = function(self)
-				self:debug("entered chasing")
+				self:debug("chasing enter")
 			end,
 
 			update = function(self)
 				if not self.target then
-					self:setState("idle")
+					self:setState("searching")
 					return
 				end
 
 				local hrp = self.target:FindFirstChild("HumanoidRootPart")
 				if not hrp then
 					self.target = nil
-					self:setState("idle")
+					self:setState("searching")
 					return
 				end
 
@@ -154,9 +169,11 @@ function npcClass:initStates()
 
 				if dist > self.range then
 					self.target = nil
-					self:setState("idle")
+					self:setState("searching")
 					return
 				end
+
+				self:updateMemory(hrp.Position)
 
 				if dist <= self.attackRange then
 					self:setState("attacking")
@@ -167,9 +184,27 @@ function npcClass:initStates()
 			end
 		},
 
+		searching = {
+			enter = function(self)
+				self:debug("searching enter")
+			end,
+
+			update = function(self)
+				if self:hasMemory() then
+					self.humanoid:MoveTo(self.memory)
+
+					if (self.root.Position - self.memory).Magnitude < 3 then
+						self.memory = nil
+					end
+				else
+					self:setState("idle")
+				end
+			end
+		},
+
 		attacking = {
 			enter = function(self)
-				self:debug("entered attacking")
+				self:debug("attacking enter")
 			end,
 
 			update = function(self)
@@ -198,7 +233,7 @@ function npcClass:initStates()
 	}
 end
 
--- state switch
+-- state change ensures clean transitions
 function npcClass:setState(state)
 	if self.state == state then return end
 
@@ -213,36 +248,36 @@ function npcClass:setState(state)
 	end
 end
 
--- movement tick
+-- movement check prevents stuck npc
 function npcClass:move()
 	if not self.moving then return end
 
-	-- simple movement fallback
-	if self.lastPosition then
-		if (self.root.Position - self.lastPosition).Magnitude < 1 then
+	if self.lastPos then
+		if (self.root.Position - self.lastPos).Magnitude < 0.5 then
 			self.moving = false
+			self:debug("movement stopped")
 		end
 	end
 
-	self.lastPosition = self.root.Position
+	self.lastPos = self.root.Position
 end
 
--- main update
+-- update delegates logic to state
 function npcClass:update()
 	if self.states[self.state] and self.states[self.state].update then
 		self.states[self.state].update(self)
 	end
 end
 
--- main loop
+-- heartbeat loop keeps npc responsive
 function npcClass:start()
-	self.connection = RunService.Heartbeat:Connect(function(dt)
+	self.connection = RunService.Heartbeat:Connect(function()
 		self:update()
 		self:move()
 	end)
 end
 
--- destroy npc
+-- cleanup avoids memory leaks
 function npcClass:Destroy()
 	if self.connection then
 		self.connection:Disconnect()
@@ -253,3 +288,4 @@ end
 
 return npcClass
 ```
+
