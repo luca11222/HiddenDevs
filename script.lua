@@ -1,13 +1,13 @@
---// Services
+--Services
 local Players = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
 
---// Class
+-- Class
 local NPC = {}
 NPC.__index = NPC
 
---// Constructor
+-- Constructor
 function NPC.new(model)
     local self = setmetatable({}, NPC)
 
@@ -38,9 +38,9 @@ function NPC.new(model)
     return self
 end
 
---// =========================
---// VALIDATION
---// =========================
+
+--VALIDATION
+
 
 -- Ensures a target is alive and usable
 function NPC:isValidTarget(target)
@@ -55,9 +55,9 @@ function NPC:isValidTarget(target)
     return true
 end
 
---// =========================
---// TARGETING
---// =========================
+
+TARGETING
+
 
 -- Finds closest player efficiently
 function NPC:getClosestPlayer()
@@ -96,9 +96,9 @@ function NPC:getPredictedPosition(target)
     return hrp.Position + (hrp.Velocity * 0.4)
 end
 
---// =========================
---// MOVEMENT
---// =========================
+
+MOVEMENT
+
 
 -- Computes a path to predicted position
 function NPC:computePath(target)
@@ -148,9 +148,9 @@ function NPC:stopMoving()
     self.waypoints = {}
 end
 
---// =========================
---// COMBAT
---// =========================
+
+--COMBAT
+
 
 -- Handles attacking with cooldown and windup
 function NPC:attack(target)
@@ -169,9 +169,8 @@ function NPC:attack(target)
     end)
 end
 
---// =========================
---// STATE LOGIC
---// =========================
+-- STATE LOGIC
+
 
 function NPC:idle()
     local target, dist = self:getClosestPlayer()
@@ -238,9 +237,9 @@ function NPC:attackState()
     self:attack(self.target)
 end
 
---// =========================
---// UPDATE LOOP
---// =========================
+
+--UPDATE LOOP
+
 
 function NPC:update()
     if self.state == "Idle" then
@@ -259,7 +258,7 @@ function NPC:update()
     end
 end
 
---// Start system using Heartbeat
+-- Start system using Heartbeat
 function NPC:start()
     RunService.Heartbeat:Connect(function()
         if not self.model.Parent then return end
